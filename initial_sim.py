@@ -1,62 +1,54 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
-def sample_interaction_distance(mu, num_particles=1):
+def run_monte_carlo_pdd(num_particles=50000, mu=0.15, phantom_depth=20.0, num_bins=40, initial_energy=1.0):
     """
-    Samples the distance a particle travels before its next interaction 
-    using Inverse Transform Sampling of the exponential decay law.
+    Simulates 1D photon transport and scores energy deposition to create a depth-dose profile.
     """
-    # Generate flat uniform random numbers between 0 and 1
-    # Using 0.0001 instead of 0.0 because ln(0) is negative infinity 
-    xi = np.random.uniform(0.0001, 1.0, size=num_particles)
-    
-    # Apply the inverse transform formula: s = -ln(xi) / mu
-    distance = -np.log(xi) / mu
-    
-    return distance
-
-def setup_phantom_and_bin_distances(distances, phantom_depth=20.0, num_bins=40):
-    """
-    Takes sampled interaction distances and sorts them into spatial bins 
-    representing a 1D water phantom.
-    """
-    # Create spatial grid boundaries 
+    # Spatial grid
     bin_edges = np.linspace(0, phantom_depth, num_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0  # Centers of each bin for plotting
     
-    # Filter out particles that travel past the end of our 20 cm tank
-    # (In real medical physics, these particles exit the patient/phantom)
+    # Initialize scorekeeper
+    dose_profile = np.zeros(num_bins)
+    
+    # Sample interaction distances for all particles at once
+    xi = np.random.uniform(0.0001, 1.0, size=num_particles)
+    distances = -np.log(xi) / mu
+    
+    # Filter out particles that exit the back of the 20 cm phantom tank
     valid_particles = distances < phantom_depth
     valid_distances = distances[valid_particles]
     
-    # Using np.digitize to find which bin index each distance falls into
-    # np.digitize compares each distance against our bin_edges and returns the bin number
+    # Map valid interaction distances into spatial bin indices
     bin_indices = np.digitize(valid_distances, bin_edges) - 1
     
-    # Step 4: Initialize an array of zeros to act as our scorekeeper (dose profile)
-    dose_profile = np.zeros(num_bins)
-    
-    # Step 5: Tally up the interactions in each bin
+    # 5. Score energy deposition: Assume every particle deposits its full initial energy upon interaction
     for idx in bin_indices:
-        if 0 <= idx < num_bins:  # Safety check to ensure it's inside our grid
-            dose_profile[idx] += 1
+        if 0 <= idx < num_bins:
+            dose_profile[idx] += initial_energy
             
-    return bin_edges, dose_profile
+    # Normalize the dose profile so the maximum value is 100% (Standard PDD representation)
+    max_dose = np.max(dose_profile)
+    if max_dose > 0:
+        pdd_curve = (dose_profile / max_dose) * 100.0
+    else:
+        pdd_curve = dose_profile
+        
+    return bin_centers, pdd_curve
 
+# --- Execute Simulation ---
+bin_centers, pdd = run_monte_carlo_pdd()
 
-# Testing
+# --- Plotting the Results ---
+plt.figure(figsize=(10, 5))
+plt.plot(bin_centers, pdd, marker='o', linestyle='-', color='teal', linewidth=2, label='Monte Carlo 1D Model')
+plt.title('Simulated Percent Depth Dose (PDD) Curve', fontsize=14, fontweight='bold')
+plt.xlabel('Depth in Water Phantom (cm)', fontsize=12)
+plt.ylabel('Relative Dose (%)', fontsize=12)
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.legend()
+plt.tight_layout()
 
-# Simulation parameters
-num_particles = 50000
-mu_water = 0.15       # Attenuation coefficient for water (1/cm)
-phantom_depth = 20.0  # Total depth of our water tank (cm)
-num_bins = 40         # Number of spatial slices
-
-# Sampling interaction distances for all particles
-distances = sample_interaction_distance(mu_water, num_particles=num_particles)
-
-# Feeding them into the functions
-bin_edges, dose_profile = setup_phantom_and_bin_distances(distances, phantom_depth, num_bins)
-
-# Getting the results back
-print("First 5 spatial bin edges (cm):", np.round(bin_edges[:6], 2))
-print("Interactions scored in the first 5 bins:", dose_profile[:5].astype(int)) # for the first 5 cos 50k is too much
-print("Total particles that interacted inside the 20cm phantom:", int(np.sum(dose_profile)))
+# Display the interactive plot window
+plt.show()
