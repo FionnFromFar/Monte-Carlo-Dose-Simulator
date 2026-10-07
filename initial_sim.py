@@ -1,10 +1,11 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-def run_monte_carlo_pdd_v3(num_particles=20000, phantom_depth=20.0, num_bins=40, initial_energy=1.0):
+def run_monte_carlo_pdd_v4(num_particles=25000, phantom_depth=20.0, num_bins=40, initial_energy=1.0):
     """
-    Version 0.3: Multi-interaction model simulating Compton scattering 
-    and the Photoelectric effect with probabilistic branching.
+    Version 0.4: Simulates secondary electron transport by applying a forward 
+    displacement shift to model the surface buildup region (Kerma vs. Dose).
     """
     bin_width = phantom_depth / num_bins
     bin_edges = np.linspace(0, phantom_depth, num_bins + 1)
@@ -18,42 +19,43 @@ def run_monte_carlo_pdd_v3(num_particles=20000, phantom_depth=20.0, num_bins=40,
         
         # Track photon while inside the phantom and above energy cutoff
         while 0.0 <= z < phantom_depth and E > 0.02:
-            # 1. Energy-dependent attenuation coefficient (mu increases as energy drops)
+            # Energy-dependent attenuation coefficient
             mu = 0.1 + 0.04 / (E + 0.1)
             
-            # 2. Sample interaction distance using mean free path
+            # Sample photon interaction distance
             xi = np.random.uniform(0.0001, 1.0)
             s = -np.log(xi) / mu
             
             z += s
             
             if 0.0 <= z < phantom_depth:
-                # 3. Determine interaction type probabilities based on current energy
-                # Photoelectric effect probability increases drastically at low energies
+                # Determine interaction type probabilities (Photoelectric vs. Compton)
                 pe_prob = 0.06 / (E + 0.05)
-                pe_prob = np.clip(pe_prob, 0.05, 0.85)  # Bound probability between 5% and 85%
+                pe_prob = np.clip(pe_prob, 0.05, 0.85)
                 
                 interaction_roll = np.random.uniform(0.0, 1.0)
-                bin_idx = int(z / bin_width)
                 
                 if interaction_roll < pe_prob or E < 0.1:
-                    # Photoelectric Effect: Photon is completely absorbed (100% energy deposition)
+                    # Photoelectric Effect: Full energy deposition
                     deposited_energy = E
-                    if 0 <= bin_idx < num_bins:
-                        dose_profile[bin_idx] += deposited_energy
-                    E = 0.0  # End photon history
-                    break
+                    E = 0.0  # Terminate photon history
                 else:
                     # Compton Scattering: Partial energy transfer to recoil electron
-                    # Transfer a random fraction (e.g., 10% to 50% of remaining energy)
                     transfer_fraction = np.random.uniform(0.1, 0.5)
                     deposited_energy = E * transfer_fraction
-                    
-                    if 0 <= bin_idx < num_bins:
-                        dose_profile[bin_idx] += deposited_energy
-                        
-                    # Photon survives with reduced energy and continues its journey
                     E -= deposited_energy
+                
+                # Secondary Electron Transport Shift
+                delta_x = np.random.exponential(scale=0.6)  # Mean projected forward electron range
+                z_dose = z + delta_x
+                
+                # Map the shifted dose deposition depth to spatial bins
+                bin_idx = int(z_dose / bin_width)
+                if 0 <= bin_idx < num_bins:
+                    dose_profile[bin_idx] += deposited_energy
+                    
+                if E == 0.0:
+                    break
             else:
                 # Photon exited the phantom
                 break
@@ -68,15 +70,23 @@ def run_monte_carlo_pdd_v3(num_particles=20000, phantom_depth=20.0, num_bins=40,
     return bin_centers, pdd_curve
 
 # --- Execute Simulation ---
-bin_centers, pdd = run_monte_carlo_pdd_v3()
+bin_centers, pdd = run_monte_carlo_pdd_v4()
 
-# --- Plotting the Results ---
+# --- Ensure the Figures directory exists ---
+os.makedirs('Figures', exist_ok=True)
+
+# --- Plotting and Saving the Results ---
 plt.figure(figsize=(10, 5))
-plt.plot(bin_centers, pdd, marker='o', linestyle='-', color='purple', linewidth=2, label='Monte Carlo v0.3 Model')
-plt.title('Percent Depth Dose (PDD) - Multi-Interaction Model (v0.3)', fontsize=14, fontweight='bold')
+plt.plot(bin_centers, pdd, marker='o', linestyle='-', color='dodgerblue', linewidth=2, label='Monte Carlo v0.4 Model')
+plt.title('Percent Depth Dose (PDD) - Buildup Region Model (v0.4)', fontsize=14, fontweight='bold')
 plt.xlabel('Depth in Water Phantom (cm)', fontsize=12)
 plt.ylabel('Relative Dose (%)', fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
 plt.legend()
 plt.tight_layout()
+
+# Save the figure to your Figures folder (must be called BEFORE plt.show())
+plt.savefig('Figures/v0.4 PDD curve.png', dpi=300)
+
+# Display the interactive plot window
 plt.show()
