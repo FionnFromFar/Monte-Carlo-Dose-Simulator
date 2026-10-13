@@ -2,10 +2,11 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-def run_monte_carlo_pdd_v4(num_particles=25000, phantom_depth=20.0, num_bins=40, initial_energy=1.0):
+def run_monte_carlo_pdd_v5(num_particles=100000, phantom_depth=20.0, num_bins=40, initial_energy=1.0):
     """
-    Version 0.4: Simulates secondary electron transport by applying a forward 
-    displacement shift to model the surface buildup region (Kerma vs. Dose).
+    Version 0.5: Statistical smoothing (100k particles) and Scatter Escape 
+    Probability to fix the 1D multi-scatter diffusion trap, restoring 
+    exponential decay past d_max.
     """
     bin_width = phantom_depth / num_bins
     bin_edges = np.linspace(0, phantom_depth, num_bins + 1)
@@ -20,7 +21,7 @@ def run_monte_carlo_pdd_v4(num_particles=25000, phantom_depth=20.0, num_bins=40,
         # Track photon while inside the phantom and above energy cutoff
         while 0.0 <= z < phantom_depth and E > 0.02:
             # Energy-dependent attenuation coefficient
-            mu = 0.1 + 0.04 / (E + 0.1)
+            mu = 0.12 + 0.05 / (E + 0.1)
             
             # Sample photon interaction distance
             xi = np.random.uniform(0.0001, 1.0)
@@ -29,7 +30,7 @@ def run_monte_carlo_pdd_v4(num_particles=25000, phantom_depth=20.0, num_bins=40,
             z += s
             
             if 0.0 <= z < phantom_depth:
-                # Determine interaction type probabilities (Photoelectric vs. Compton)
+                # Determine interaction probabilities
                 pe_prob = 0.06 / (E + 0.05)
                 pe_prob = np.clip(pe_prob, 0.05, 0.85)
                 
@@ -40,13 +41,20 @@ def run_monte_carlo_pdd_v4(num_particles=25000, phantom_depth=20.0, num_bins=40,
                     deposited_energy = E
                     E = 0.0  # Terminate photon history
                 else:
-                    # Compton Scattering: Partial energy transfer to recoil electron
-                    transfer_fraction = np.random.uniform(0.1, 0.5)
+                    # Compton Scattering: Partial energy transfer
+                    transfer_fraction = np.random.uniform(0.2, 0.65)
                     deposited_energy = E * transfer_fraction
                     E -= deposited_energy
+                    
+                    # Scatter escape probability
+                    # Mimics 3D wide-angle scatter by randomly removing 
+                    # deflected photons from the 1D central axis.
+                    escape_chance = 0.3 + 0.1 / (E + 0.1) 
+                    if np.random.uniform() < escape_chance:
+                        E = 0.0  # Photon scattered out of the beam path, history ends
                 
                 # Secondary Electron Transport Shift
-                delta_x = np.random.exponential(scale=0.6)  # Mean projected forward electron range
+                delta_x = np.random.exponential(scale=0.6)
                 z_dose = z + delta_x
                 
                 # Map the shifted dose deposition depth to spatial bins
@@ -70,23 +78,22 @@ def run_monte_carlo_pdd_v4(num_particles=25000, phantom_depth=20.0, num_bins=40,
     return bin_centers, pdd_curve
 
 # --- Execute Simulation ---
-bin_centers, pdd = run_monte_carlo_pdd_v4()
+bin_centers, pdd = run_monte_carlo_pdd_v5()
 
 # --- Ensure the Figures directory exists ---
 os.makedirs('Figures', exist_ok=True)
 
 # --- Plotting and Saving the Results ---
 plt.figure(figsize=(10, 5))
-plt.plot(bin_centers, pdd, marker='o', linestyle='-', color='dodgerblue', linewidth=2, label='Monte Carlo v0.4 Model')
-plt.title('Percent Depth Dose (PDD) - Buildup Region Model (v0.4)', fontsize=14, fontweight='bold')
+plt.plot(bin_centers, pdd, marker='o', linestyle='-', color='purple', linewidth=2, label='Monte Carlo v0.5 Model')
+plt.title('Percent Depth Dose (PDD) - Scatter Escape & Decay (v0.5)', fontsize=14, fontweight='bold')
 plt.xlabel('Depth in Water Phantom (cm)', fontsize=12)
 plt.ylabel('Relative Dose (%)', fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
 plt.legend()
 plt.tight_layout()
 
-# Save the figure to your Figures folder (must be called BEFORE plt.show())
-plt.savefig('Figures/v0.4 PDD curve.png', dpi=300)
+# Save the figure, overwriting the previous v0.5 image
+plt.savefig('Figures/v0.5 PDD curve.png', dpi=300)
 
-# Display the interactive plot window
 plt.show()
