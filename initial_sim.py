@@ -2,11 +2,23 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-def run_monte_carlo_pdd_v5(num_particles=100000, phantom_depth=20.0, num_bins=40, initial_energy=1.0):
+def get_continuous_spectrum_energy(E_max):
     """
-    Version 0.5: Statistical smoothing (100k particles) and Scatter Escape 
-    Probability to fix the 1D multi-scatter diffusion trap, restoring 
-    exponential decay past d_max.
+    Samples a continuous Bremsstrahlung energy distribution based on the provided E_max.
+    """
+    peak_energy = E_max / 3.0
+    max_prob = peak_energy * (E_max - peak_energy)**2
+    
+    while True:
+        E_guess = np.random.uniform(0.1, E_max)
+        P_guess = (E_guess * (E_max - E_guess)**2) / max_prob
+        
+        if np.random.uniform(0.0, 1.0) < P_guess:
+            return E_guess
+
+def run_monte_carlo_pdd(num_particles=100000, phantom_depth=30.0, num_bins=60, E_max=6.0):
+    """
+    Runs the v0.6 transport kernel for a specified maximum beam energy (E_max).
     """
     bin_width = phantom_depth / num_bins
     bin_edges = np.linspace(0, phantom_depth, num_bins + 1)
@@ -16,48 +28,40 @@ def run_monte_carlo_pdd_v5(num_particles=100000, phantom_depth=20.0, num_bins=40
     
     for i in range(num_particles):
         z = 0.0
-        E = initial_energy
+        E = get_continuous_spectrum_energy(E_max)
         
-        # Track photon while inside the phantom and above energy cutoff
         while 0.0 <= z < phantom_depth and E > 0.02:
-            # Energy-dependent attenuation coefficient
             mu = 0.12 + 0.05 / (E + 0.1)
             
-            # Sample photon interaction distance
             xi = np.random.uniform(0.0001, 1.0)
             s = -np.log(xi) / mu
-            
             z += s
             
             if 0.0 <= z < phantom_depth:
-                # Determine interaction probabilities
                 pe_prob = 0.06 / (E + 0.05)
                 pe_prob = np.clip(pe_prob, 0.05, 0.85)
                 
                 interaction_roll = np.random.uniform(0.0, 1.0)
                 
                 if interaction_roll < pe_prob or E < 0.1:
-                    # Photoelectric Effect: Full energy deposition
                     deposited_energy = E
-                    E = 0.0  # Terminate photon history
+                    E_for_electron = E  
+                    E = 0.0  
                 else:
-                    # Compton Scattering: Partial energy transfer
                     transfer_fraction = np.random.uniform(0.2, 0.65)
                     deposited_energy = E * transfer_fraction
+                    E_for_electron = deposited_energy 
                     E -= deposited_energy
                     
-                    # Scatter escape probability
-                    # Mimics 3D wide-angle scatter by randomly removing 
-                    # deflected photons from the 1D central axis.
                     escape_chance = 0.3 + 0.1 / (E + 0.1) 
                     if np.random.uniform() < escape_chance:
-                        E = 0.0  # Photon scattered out of the beam path, history ends
+                        E = 0.0  
                 
-                # Secondary Electron Transport Shift
-                delta_x = np.random.exponential(scale=0.6)
+                # Energy-Coupled Electron Shift
+                electron_range_scale = 0.3 * E_for_electron
+                delta_x = np.random.exponential(scale=electron_range_scale)
                 z_dose = z + delta_x
                 
-                # Map the shifted dose deposition depth to spatial bins
                 bin_idx = int(z_dose / bin_width)
                 if 0 <= bin_idx < num_bins:
                     dose_profile[bin_idx] += deposited_energy
@@ -65,10 +69,8 @@ def run_monte_carlo_pdd_v5(num_particles=100000, phantom_depth=20.0, num_bins=40
                 if E == 0.0:
                     break
             else:
-                # Photon exited the phantom
                 break
                 
-    # Normalize the dose profile so the maximum value is 100%
     max_dose = np.max(dose_profile)
     if max_dose > 0:
         pdd_curve = (dose_profile / max_dose) * 100.0
@@ -77,23 +79,35 @@ def run_monte_carlo_pdd_v5(num_particles=100000, phantom_depth=20.0, num_bins=40
         
     return bin_centers, pdd_curve
 
-# --- Execute Simulation ---
-bin_centers, pdd = run_monte_carlo_pdd_v5()
+# Standard clinical linac energies to simulate
+beam_energies = [4.0, 6.0, 10.0, 15.0]
+colors = ['teal', 'darkorange', 'crimson', 'purple']
 
-# --- Ensure the Figures directory exists ---
-os.makedirs('Figures', exist_ok=True)
+# Ensure the new nested directory exists
+output_dir = os.path.join('Figures', 'final version dose distributions')
+os.makedirs(output_dir, exist_ok=True)
 
-# --- Plotting and Saving the Results ---
-plt.figure(figsize=(10, 5))
-plt.plot(bin_centers, pdd, marker='o', linestyle='-', color='purple', linewidth=2, label='Monte Carlo v0.5 Model')
-plt.title('Percent Depth Dose (PDD) - Scatter Escape & Decay (v0.5)', fontsize=14, fontweight='bold')
+# --- Plotting Setup ---
+plt.figure(figsize=(12, 6))
+
+# Run simulation for each energy and plot on the same graph
+for E_max, color in zip(beam_energies, colors):
+    print(f"Simulating {E_max} MV beam...")
+    bin_centers, pdd = run_monte_carlo_pdd(E_max=E_max)
+    plt.plot(bin_centers, pdd, marker='o', markersize=4, linestyle='-', color=color, linewidth=2, label=f'{int(E_max)} MV Beam')
+
+# --- Formatting Final Figure ---
+plt.title('PDD Comparison by Energy (v0.6)', fontsize=15, fontweight='bold')
 plt.xlabel('Depth in Water Phantom (cm)', fontsize=12)
 plt.ylabel('Relative Dose (%)', fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
-plt.legend()
+plt.legend(fontsize=11)
+plt.xlim(0, 30)
 plt.tight_layout()
 
-# Save the figure, overwriting the previous v0.5 image
-plt.savefig('Figures/v0.5 PDD curve.png', dpi=300)
+# Save the combined figure
+save_path = os.path.join(output_dir, 'Multi_Energy_PDD_Comparison.png')
+plt.savefig(save_path, dpi=300)
+print(f"\nFigure saved successfully to: {save_path}")
 
 plt.show()
